@@ -1,5 +1,3 @@
-# tests/test_vault.py
-
 import unittest
 from src.vault import Vault
 
@@ -8,12 +6,16 @@ class TestVault(unittest.TestCase):
         self.vault = Vault()
 
     def test_add_and_get(self):
+        # Add new entry
         result = self.vault.add("gmail", "user1", "pass1")
         self.assertTrue(result)
+        # Get the entry
         self.assertEqual(self.vault.get("gmail", "user1"), "pass1")
 
     def test_add_duplicate(self):
+        # Add first time
         self.vault.add("gmail", "user1", "pass1")
+        # Try adding duplicate
         result = self.vault.add("gmail", "user1", "pass2")
         self.assertFalse(result)
         self.assertEqual(self.vault.get("gmail", "user1"), "pass1")

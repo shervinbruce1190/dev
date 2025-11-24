@@ -6,251 +6,179 @@ import json
 import os
 import secrets
 import string
-from typing import Optional, Dict, List
-from datetime import datetime
 import base64
+from typing import Optional, Dict, List, Any
+from datetime import datetime
+
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 
+# -----------------------
+# Utilities / Components
+# -----------------------
 class PasswordStrengthChecker:
     """Check password strength and provide feedback"""
-    
+
     @staticmethod
-    def check_strength(password: str) -> Dict[str, any]:
-        """
-        Check password strength
-        
-        Args:
-            password: Password to check
-            
-        Returns:
-            Dictionary with strength score and feedback
-        """
+    def check_strength(password: str) -> Dict[str, Any]:
         if not password:
             return {"score": 0, "strength": "empty", "feedback": ["Password cannot be empty"]}
-        
+
         score = 0
-        feedback = []
-        
-        # Length check
+        feedback: List[str] = []
+
+        # Length checks
         if len(password) >= 8:
             score += 1
         else:
             feedback.append("Password should be at least 8 characters")
-        
+
         if len(password) >= 12:
             score += 1
-        
-        # Character variety checks
+
+        # Character variety
         if any(c.isupper() for c in password):
             score += 1
         else:
             feedback.append("Add uppercase letters")
-        
+
         if any(c.islower() for c in password):
             score += 1
         else:
             feedback.append("Add lowercase letters")
-        
+
         if any(c.isdigit() for c in password):
             score += 1
         else:
             feedback.append("Add numbers")
-        
+
         if any(c in string.punctuation for c in password):
             score += 1
         else:
             feedback.append("Add special characters")
-        
-        # Determine strength level
+
         if score <= 2:
             strength = "weak"
         elif score <= 4:
             strength = "medium"
         else:
             strength = "strong"
-        
-        return {
-            "score": score,
-            "strength": strength,
-            "feedback": feedback if feedback else ["Password is strong"]
-        }
+
+        return {"score": score, "strength": strength, "feedback": feedback or ["Password is strong"]}
 
 
 class PasswordGenerator:
     """Generate secure random passwords"""
-    
+
     @staticmethod
-    def generate(length: int = 16, use_symbols: bool = True, 
+    def generate(length: int = 16, use_symbols: bool = True,
                  use_numbers: bool = True, use_uppercase: bool = True,
                  use_lowercase: bool = True) -> str:
-        """
-        Generate a random password
-        
-        Args:
-            length: Length of password
-            use_symbols: Include special characters
-            use_numbers: Include numbers
-            use_uppercase: Include uppercase letters
-            use_lowercase: Include lowercase letters
-            
-        Returns:
-            Generated password
-            
-        Raises:
-            ValueError: If invalid parameters
-        """
         if length < 4:
             raise ValueError("Password length must be at least 4")
-        
+
         if not any([use_symbols, use_numbers, use_uppercase, use_lowercase]):
             raise ValueError("At least one character type must be selected")
-        
+
         characters = ""
-        password_chars = []
-        
+        password_chars: List[str] = []
+
         if use_lowercase:
             characters += string.ascii_lowercase
             password_chars.append(secrets.choice(string.ascii_lowercase))
-        
+
         if use_uppercase:
             characters += string.ascii_uppercase
             password_chars.append(secrets.choice(string.ascii_uppercase))
-        
+
         if use_numbers:
             characters += string.digits
             password_chars.append(secrets.choice(string.digits))
-        
+
         if use_symbols:
             characters += string.punctuation
             password_chars.append(secrets.choice(string.punctuation))
-        
-        # Fill remaining length
+
         for _ in range(length - len(password_chars)):
             password_chars.append(secrets.choice(characters))
-        
-        # Shuffle to avoid predictable patterns
+
         secrets.SystemRandom().shuffle(password_chars)
-        
-        return ''.join(password_chars)
+        return "".join(password_chars)
 
 
+# -----------------------
+# Encryption helper
+# -----------------------
 class Encryptor:
-    """Handle encryption and decryption of passwords"""
-    
-    def __init__(self, master_password: str, salt: Optional[bytes] = None):
-        """
-        Initialize encryptor
-        
-        Args:
-            master_password: Master password for encryption
-            salt: Salt for key derivation (generated if not provided)
-        """
+    """Handle encryption and decryption of text using Fernet (key derived from password)"""
+
+    def __init__(self, master_password: str, salt: Optional[bytes] = None, iterations: int = 100_000) -> None:
         if not master_password:
             raise ValueError("Master password cannot be empty")
-        
-        self.salt = salt if salt else os.urandom(16)
-        self.key = self._derive_key(master_password)
-        self.cipher = Fernet(self.key)
-    
+        self.iterations = int(iterations)
+        self.salt = salt if salt is not None else os.urandom(16)
+        self._key = self._derive_key(master_password)
+        self._cipher = Fernet(self._key)
+
     def _derive_key(self, password: str) -> bytes:
-        """
-        Derive encryption key from password
-        
-        Args:
-            password: Master password
-            
-        Returns:
-            Derived key
-        """
+        """Derive a Fernet-compatible key (base64 urlsafe) using PBKDF2-HMAC-SHA256."""
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=self.salt,
-            iterations=100000,
+            iterations=self.iterations,
         )
-        key = base64.urlsafe_b64encode(kdf.derive(password.encode()))
-        return key
-    
-    def encrypt(self, data: str) -> str:
-        """
-        Encrypt data
-        
-        Args:
-            data: Plain text to encrypt
-            
-        Returns:
-            Encrypted data as base64 string
-        """
-        if not data:
-            raise ValueError("Data cannot be empty")
-        
-        encrypted = self.cipher.encrypt(data.encode())
-        return base64.b64encode(encrypted).decode()
-    
-    def decrypt(self, encrypted_data: str) -> str:
-        """
-        Decrypt data
-        
-        Args:
-            encrypted_data: Encrypted data as base64 string
-            
-        Returns:
-            Decrypted plain text
-            
-        Raises:
-            ValueError: If decryption fails
-        """
-        if not encrypted_data:
+        raw = kdf.derive(password.encode("utf-8"))
+        return base64.urlsafe_b64encode(raw)
+
+    def encrypt(self, plaintext: str) -> str:
+        if plaintext is None:
+            raise ValueError("Data cannot be None")
+        token = self._cipher.encrypt(plaintext.encode("utf-8"))
+        return base64.b64encode(token).decode("utf-8")
+
+    def decrypt(self, encrypted_b64: str) -> str:
+        if not encrypted_b64:
             raise ValueError("Encrypted data cannot be empty")
-        
         try:
-            decoded = base64.b64decode(encrypted_data.encode())
-            decrypted = self.cipher.decrypt(decoded)
-            return decrypted.decode()
+            token = base64.b64decode(encrypted_b64.encode("utf-8"))
+            plaintext = self._cipher.decrypt(token)
+            return plaintext.decode("utf-8")
         except Exception as e:
-            raise ValueError(f"Decryption failed: {str(e)}")
-    
+            # Hide low-level exception, expose a clear API-level error
+            raise ValueError("Decryption failed") from e
+
     def get_salt(self) -> bytes:
-        """Get the salt used for key derivation"""
         return self.salt
 
 
+# -----------------------
+# Data container
+# -----------------------
 class PasswordEntry:
     """Represent a password entry"""
-    
+
     def __init__(self, service: str, username: str, password: str,
                  notes: str = "", created_at: Optional[str] = None,
                  updated_at: Optional[str] = None):
-        """
-        Initialize password entry
-        
-        Args:
-            service: Service name
-            username: Username
-            password: Password
-            notes: Additional notes
-            created_at: Creation timestamp
-            updated_at: Update timestamp
-        """
         if not service:
             raise ValueError("Service name cannot be empty")
         if not username:
             raise ValueError("Username cannot be empty")
-        if not password:
-            raise ValueError("Password cannot be empty")
-        
+        if password is None:
+            raise ValueError("Password cannot be None")
+
         self.service = service
         self.username = username
         self.password = password
-        self.notes = notes
-        self.created_at = created_at or datetime.now().isoformat()
-        self.updated_at = updated_at or datetime.now().isoformat()
-    
-    def to_dict(self) -> Dict:
-        """Convert entry to dictionary"""
+        self.notes = notes or ""
+        now = datetime.now().isoformat()
+        self.created_at = created_at or now
+        self.updated_at = updated_at or now
+
+    def to_dict(self) -> Dict[str, Any]:
         return {
             "service": self.service,
             "username": self.username,
@@ -259,10 +187,9 @@ class PasswordEntry:
             "created_at": self.created_at,
             "updated_at": self.updated_at
         }
-    
+
     @staticmethod
-    def from_dict(data: Dict) -> 'PasswordEntry':
-        """Create entry from dictionary"""
+    def from_dict(data: Dict[str, Any]) -> 'PasswordEntry':
         return PasswordEntry(
             service=data["service"],
             username=data["username"],
@@ -273,335 +200,222 @@ class PasswordEntry:
         )
 
 
+# -----------------------
+# Main manager
+# -----------------------
 class PasswordManager:
-    """Main password manager class"""
-    
-    def __init__(self, master_password: str, storage_path: str = "passwords.enc"):
-        """
-        Initialize password manager
-        
-        Args:
-            master_password: Master password for encryption
-            storage_path: Path to storage file
-        """
+    """
+    Main password manager class.
+
+    File format (JSON):
+    {
+        "salt": "<base64 salt>",
+        "iterations": <int>,
+        "master_password_hash": "<sha256 hex>",
+        "entries_encrypted": "<base64 ciphertext>"
+    }
+
+    The 'entries_encrypted' is a Fernet-encrypted JSON string representing a list of entry dicts.
+    """
+
+    def __init__(self, master_password: str, storage_path: str = "passwords.enc", iterations: int = 100_000):
         if not master_password:
             raise ValueError("Master password cannot be empty")
-        
         self.storage_path = storage_path
+        self.iterations = int(iterations)
         self.entries: Dict[str, PasswordEntry] = {}
-        self.encryptor: Optional[Encryptor] = None
         self.master_password_hash = self._hash_password(master_password)
-        
-        # Load existing data or initialize new
-        if os.path.exists(storage_path):
+        # If file exists -> load (will validate the master password)
+        if os.path.exists(self.storage_path):
             self._load(master_password)
         else:
-            self.encryptor = Encryptor(master_password)
-    
+            # New storage: create encryptor with new salt
+            self.encryptor = Encryptor(master_password, salt=None, iterations=self.iterations)
+
     @staticmethod
     def _hash_password(password: str) -> str:
-        """Hash password using SHA256"""
-        return hashlib.sha256(password.encode()).hexdigest()
-    
-    def add_entry(self, service: str, username: str, password: str,
-                  notes: str = "") -> PasswordEntry:
-        """
-        Add a new password entry
-        
-        Args:
-            service: Service name
-            username: Username
-            password: Password
-            notes: Additional notes
-            
-        Returns:
-            Created password entry
-            
-        Raises:
-            ValueError: If entry already exists
-        """
+        return hashlib.sha256(password.encode("utf-8")).hexdigest()
+
+    def add_entry(self, service: str, username: str, password: str, notes: str = "") -> PasswordEntry:
         key = f"{service}:{username}"
-        
         if key in self.entries:
             raise ValueError(f"Entry for {service} with username {username} already exists")
-        
         entry = PasswordEntry(service, username, password, notes)
         self.entries[key] = entry
         return entry
-    
+
     def get_entry(self, service: str, username: str) -> Optional[PasswordEntry]:
-        """
-        Get a password entry
-        
-        Args:
-            service: Service name
-            username: Username
-            
-        Returns:
-            Password entry or None if not found
-        """
-        key = f"{service}:{username}"
-        return self.entries.get(key)
-    
-    def update_entry(self, service: str, username: str, 
+        return self.entries.get(f"{service}:{username}")
+
+    def update_entry(self, service: str, username: str,
                      new_password: Optional[str] = None,
                      new_notes: Optional[str] = None) -> PasswordEntry:
-        """
-        Update a password entry
-        
-        Args:
-            service: Service name
-            username: Username
-            new_password: New password (optional)
-            new_notes: New notes (optional)
-            
-        Returns:
-            Updated entry
-            
-        Raises:
-            ValueError: If entry not found
-        """
         key = f"{service}:{username}"
-        
         if key not in self.entries:
             raise ValueError(f"Entry for {service} with username {username} not found")
-        
         entry = self.entries[key]
-        
         if new_password is not None:
             entry.password = new_password
-        
         if new_notes is not None:
             entry.notes = new_notes
-        
         entry.updated_at = datetime.now().isoformat()
-        
         return entry
-    
+
     def delete_entry(self, service: str, username: str) -> bool:
-        """
-        Delete a password entry
-        
-        Args:
-            service: Service name
-            username: Username
-            
-        Returns:
-            True if deleted, False if not found
-        """
         key = f"{service}:{username}"
-        
         if key in self.entries:
             del self.entries[key]
             return True
-        
         return False
-    
+
     def list_entries(self, service_filter: Optional[str] = None) -> List[PasswordEntry]:
-        """
-        List all password entries
-        
-        Args:
-            service_filter: Optional filter by service name
-            
-        Returns:
-            List of password entries
-        """
-        entries = list(self.entries.values())
-        
+        results = list(self.entries.values())
         if service_filter:
-            entries = [e for e in entries if service_filter.lower() in e.service.lower()]
-        
-        return sorted(entries, key=lambda x: x.service)
-    
+            sf = service_filter.lower()
+            results = [e for e in results if sf in e.service.lower()]
+        return sorted(results, key=lambda x: x.service)
+
     def save(self) -> bool:
         """
-        Save all entries to encrypted file
-        
-        Returns:
-            True if successful
+        Save entries to storage_path. The salt and iterations are stored in plaintext so a loader can
+        derive the correct key to decrypt the encrypted payload.
         """
-        if not self.encryptor:
+        if not hasattr(self, "encryptor") or self.encryptor is None:
             return False
-        
+
         try:
-            # Prepare data
+            entries_list = [entry.to_dict() for entry in self.entries.values()]
+            plaintext = json.dumps({"entries": entries_list})
+            encrypted_payload = self.encryptor.encrypt(plaintext)
             data = {
-                "salt": base64.b64encode(self.encryptor.get_salt()).decode(),
+                "salt": base64.b64encode(self.encryptor.get_salt()).decode("utf-8"),
+                "iterations": self.iterations,
                 "master_password_hash": self.master_password_hash,
-                "entries": [entry.to_dict() for entry in self.entries.values()]
+                "entries_encrypted": encrypted_payload
             }
-            
-            # Encrypt and save
-            json_data = json.dumps(data)
-            encrypted_data = self.encryptor.encrypt(json_data)
-            
-            with open(self.storage_path, 'w') as f:
-                f.write(encrypted_data)
-            
+            with open(self.storage_path, "w", encoding="utf-8") as fh:
+                json.dump(data, fh, ensure_ascii=False, indent=2)
             return True
         except Exception:
             return False
-    
+
     def _load(self, master_password: str) -> None:
         """
-        Load entries from encrypted file
-        
-        Args:
-            master_password: Master password for decryption
-            
-        Raises:
-            ValueError: If decryption fails or password is incorrect
+        Load entries from file. Requires the correct master_password.
+        The salt is read from the file, used to derive the key, then the payload is decrypted.
         """
         try:
-            with open(self.storage_path, 'r') as f:
-                encrypted_data = f.read()
-            
-            # First, try to decrypt with temporary encryptor to get salt
-            temp_encryptor = Encryptor(master_password)
-            
-            try:
-                decrypted_data = temp_encryptor.decrypt(encrypted_data)
-                data = json.loads(decrypted_data)
-            except Exception:
-                # If that fails, we need to extract salt first
-                # This is a simplified approach - in production, store salt separately
-                raise ValueError("Invalid master password or corrupted data")
-            
-            # Verify master password
-            stored_hash = data.get("master_password_hash")
-            if stored_hash != self._hash_password(master_password):
-                raise ValueError("Invalid master password")
-            
-            # Get the salt and create proper encryptor
-            salt = base64.b64decode(data["salt"].encode())
-            self.encryptor = Encryptor(master_password, salt)
-            
-            # Load entries
-            self.entries = {}
-            for entry_data in data.get("entries", []):
-                entry = PasswordEntry.from_dict(entry_data)
-                key = f"{entry.service}:{entry.username}"
-                self.entries[key] = entry
-                
+            with open(self.storage_path, "r", encoding="utf-8") as fh:
+                raw = json.load(fh)
         except FileNotFoundError:
             raise ValueError("Storage file not found")
         except json.JSONDecodeError:
             raise ValueError("Corrupted data file")
-    
+
+        # Validate required fields
+        for k in ("salt", "iterations", "master_password_hash", "entries_encrypted"):
+            if k not in raw:
+                raise ValueError("Storage file is malformed")
+
+        salt = base64.b64decode(raw["salt"].encode("utf-8"))
+        iterations = int(raw.get("iterations", self.iterations))
+        stored_hash = raw["master_password_hash"]
+
+        # Verify master password quickly by comparing hashes
+        if stored_hash != self._hash_password(master_password):
+            raise ValueError("Invalid master password")
+
+        # Create encryptor with the stored salt to decrypt payload
+        self.encryptor = Encryptor(master_password, salt=salt, iterations=iterations)
+        self.iterations = iterations
+        self.master_password_hash = stored_hash
+
+        # Decrypt entries
+        try:
+            decrypted = self.encryptor.decrypt(raw["entries_encrypted"])
+            data = json.loads(decrypted)
+            entries_data = data.get("entries", [])
+            self.entries = {}
+            for ed in entries_data:
+                entry = PasswordEntry.from_dict(ed)
+                key = f"{entry.service}:{entry.username}"
+                self.entries[key] = entry
+        except Exception:
+            raise ValueError("Failed to decrypt entries (wrong password or corrupted data)")
+
     def change_master_password(self, old_password: str, new_password: str) -> bool:
-        """
-        Change the master password
-        
-        Args:
-            old_password: Current master password
-            new_password: New master password
-            
-        Returns:
-            True if successful
-            
-        Raises:
-            ValueError: If old password is incorrect or new password is invalid
-        """
         if not new_password:
             raise ValueError("New password cannot be empty")
-        
-        # Verify old password
         if self._hash_password(old_password) != self.master_password_hash:
             raise ValueError("Invalid old password")
-        
-        # Create new encryptor
-        self.encryptor = Encryptor(new_password)
+
+        # Create new encryptor with fresh salt and re-save
+        self.encryptor = Encryptor(new_password, salt=None, iterations=self.iterations)
         self.master_password_hash = self._hash_password(new_password)
-        
-        # Save with new encryption
         return self.save()
-    
+
     def export_to_json(self, output_path: str, include_passwords: bool = True) -> bool:
-        """
-        Export entries to JSON file (unencrypted)
-        
-        Args:
-            output_path: Path to output file
-            include_passwords: Whether to include passwords in export
-            
-        Returns:
-            True if successful
-        """
         try:
-            entries_data = []
+            exported = []
             for entry in self.entries.values():
-                entry_dict = entry.to_dict()
+                d = entry.to_dict()
                 if not include_passwords:
-                    entry_dict["password"] = "********"
-                entries_data.append(entry_dict)
-            
-            with open(output_path, 'w') as f:
-                json.dump(entries_data, f, indent=2)
-            
+                    d["password"] = "********"
+                exported.append(d)
+            with open(output_path, "w", encoding="utf-8") as fh:
+                json.dump(exported, fh, indent=2, ensure_ascii=False)
             return True
         except Exception:
             return False
-    
+
     def search_entries(self, query: str) -> List[PasswordEntry]:
-        """
-        Search entries by service name, username, or notes
-        
-        Args:
-            query: Search query
-            
-        Returns:
-            List of matching entries
-        """
         if not query:
             return []
-        
-        query_lower = query.lower()
-        results = []
-        
+        q = query.lower()
+        matches = []
         for entry in self.entries.values():
-            if (query_lower in entry.service.lower() or
-                query_lower in entry.username.lower() or
-                query_lower in entry.notes.lower()):
-                results.append(entry)
-        
-        return sorted(results, key=lambda x: x.service)
+            if (q in entry.service.lower() or q in entry.username.lower() or q in entry.notes.lower()):
+                matches.append(entry)
+        return sorted(matches, key=lambda x: x.service)
 
 
+# -----------------------
+# Demo main
+# -----------------------
 def main():
-    """Main function for demonstration"""
     print("Password Manager initialized successfully!")
     print("This is a library module. Import it to use in your application.")
-    
-    # Example usage
+
+    demo_path = "passwords.enc"
     try:
-        # Initialize password manager
-        pm = PasswordManager("my_secure_master_password")
-        
-        # Generate a strong password
-        generator = PasswordGenerator()
-        strong_pwd = generator.generate(16)
+        pm = PasswordManager("my_secure_master_password", storage_path=demo_path)
+
+        # Create a strong password
+        strong_pwd = PasswordGenerator.generate(16)
         print(f"Generated password: {strong_pwd}")
-        
-        # Check password strength
-        checker = PasswordStrengthChecker()
-        strength = checker.check_strength(strong_pwd)
-        print(f"Password strength: {strength['strength']}")
-        
-        # Add an entry
-        entry = pm.add_entry("example.com", "user@example.com", strong_pwd, "My account")
-        print(f"Added entry for {entry.service}")
-        
-        # Save to file
-        pm.save()
-        print("Passwords saved successfully!")
-        
-        # Clean up demo file
-        if os.path.exists("passwords.enc"):
-            os.remove("passwords.enc")
-            
-    except Exception as e:
-        print(f"Error: {e}")
+
+        # Check strength
+        strength = PasswordStrengthChecker.check_strength(strong_pwd)
+        print(f"Password strength: {strength['strength']} ({strength['score']})")
+
+        # Add entry and save
+        pm.add_entry("example.com", "user@example.com", strong_pwd, "Demo account")
+        saved = pm.save()
+        print("Saved:", saved)
+
+        # Load and read back
+        pm2 = PasswordManager("my_secure_master_password", storage_path=demo_path)
+        entry = pm2.get_entry("example.com", "user@example.com")
+        if entry:
+            print("Loaded entry:", entry.service, entry.username)
+
+    finally:
+        # cleanup demo file
+        try:
+            if os.path.exists(demo_path):
+                os.remove(demo_path)
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":

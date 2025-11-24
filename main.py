@@ -11,8 +11,21 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.fernet import Fernet, InvalidToken
 
 DB_PATH = "vault.db"
-ITERATIONS = 200_000  # PBKDF2 iterations
+ITERATIONS = 200_000
 ENCODING = "utf-8"
+
+# 🔹 Constants for repeated literals
+PROMPT_USERNAME = "Username: "
+PROMPT_SERVICE = "Service: "
+PROMPT_PASSWORD = "Password: "
+PROMPT_NOTES = "Notes (optional): "
+MSG_NO_ENTRY = "No entry found."
+MSG_ENTRY_ADDED = "Entry added."
+MSG_ENTRY_UPDATED = "Entry updated."
+MSG_ENTRY_DELETED = "Entry deleted."
+MSG_CANCELLED = "Cancelled."
+MSG_VAULT_UNLOCKED = "Vault unlocked."
+MSG_GOODBYE = "Goodbye."
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -36,7 +49,6 @@ def connect_db(path=DB_PATH):
     return conn
 
 def derive_key(master_password: str, salt: bytes) -> bytes:
-    # Derive a 32-byte key for Fernet
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
         length=32,
@@ -52,7 +64,6 @@ def get_or_init_salt_and_verifier(conn: sqlite3.Connection) -> bytes:
     row = cur.fetchone()
     if row:
         return row[0]
-    # Initialize: create salt and store verifier ciphertext for integrity
     salt = secrets.token_bytes(16)
     conn.execute("INSERT INTO meta (key, value) VALUES (?, ?)", ("salt", salt))
     conn.commit()
@@ -60,9 +71,7 @@ def get_or_init_salt_and_verifier(conn: sqlite3.Connection) -> bytes:
 
 def store_verifier(conn: sqlite3.Connection, fernet: Fernet):
     token = fernet.encrypt(b"vault_verifier_v1")
-    # store or update
-    cur = conn.cursor()
-    cur.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", ("verifier", token))
+    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", ("verifier", token))
     conn.commit()
 
 def check_verifier(conn: sqlite3.Connection, fernet: Fernet) -> bool:
@@ -70,7 +79,6 @@ def check_verifier(conn: sqlite3.Connection, fernet: Fernet) -> bool:
     cur.execute("SELECT value FROM meta WHERE key='verifier'")
     row = cur.fetchone()
     if not row:
-        # First-time setup
         store_verifier(conn, fernet)
         return True
     try:
@@ -80,7 +88,7 @@ def check_verifier(conn: sqlite3.Connection, fernet: Fernet) -> bool:
         return False
 
 def encrypt(fernet: Fernet, plaintext: Optional[str]) -> Optional[bytes]:
-    if plaintext is None or plaintext == "":
+    if not plaintext:
         return None
     return fernet.encrypt(plaintext.encode(ENCODING))
 
@@ -107,10 +115,10 @@ def init_or_unlock(conn: sqlite3.Connection) -> Fernet:
     return fernet
 
 def cmd_add(conn, fernet):
-    service = input("Service (e.g., gmail): ").strip()
-    username = input("Username: ").strip()
-    password = prompt_hidden("Password: ").strip()
-    notes = input("Notes (optional): ").strip()
+    service = input(PROMPT_SERVICE).strip()
+    username = input(PROMPT_USERNAME).strip()
+    password = prompt_hidden(PROMPT_PASSWORD).strip()
+    notes = input(PROMPT_NOTES).strip()
     enc_pwd = encrypt(fernet, password)
     enc_notes = encrypt(fernet, notes) if notes else None
     try:
@@ -119,13 +127,13 @@ def cmd_add(conn, fernet):
             (service, username, enc_pwd, enc_notes),
         )
         conn.commit()
-        print("Entry added.")
+        print(MSG_ENTRY_ADDED)
     except sqlite3.IntegrityError:
         print("Entry already exists. Use update.")
 
 def cmd_get(conn, fernet):
-    service = input("Service: ").strip()
-    username = input("Username: ").strip()
+    service = input(PROMPT_SERVICE).strip()
+    username = input(PROMPT_USERNAME).strip()
     cur = conn.cursor()
     cur.execute(
         "SELECT password, notes FROM entries WHERE service=? AND username=?",
@@ -133,13 +141,13 @@ def cmd_get(conn, fernet):
     )
     row = cur.fetchone()
     if not row:
-        print("No entry found.")
+        print(MSG_NO_ENTRY)
         return
     pwd = decrypt(fernet, row[0])
     notes = decrypt(fernet, row[1]) if row[1] else ""
-    print(f"Password: {pwd}")
+    print(f"{PROMPT_PASSWORD}{pwd}")
     if notes:
-        print(f"Notes: {notes}")
+        print(f"{PROMPT_NOTES}{notes}")
 
 def cmd_list(conn):
     cur = conn.cursor()
@@ -152,8 +160,8 @@ def cmd_list(conn):
         print(f"- {s} / {u}")
 
 def cmd_update(conn, fernet):
-    service = input("Service: ").strip()
-    username = input("Username: ").strip()
+    service = input(PROMPT_SERVICE).strip()
+    username = input(PROMPT_USERNAME).strip()
     new_password = prompt_hidden("New password (leave empty to keep): ").strip()
     new_notes = input("New notes (leave empty to keep, '-' to clear): ").strip()
 
@@ -161,7 +169,7 @@ def cmd_update(conn, fernet):
     cur.execute("SELECT id, password, notes FROM entries WHERE service=? AND username=?", (service, username))
     row = cur.fetchone()
     if not row:
-        print("No entry found.")
+        print(MSG_NO_ENTRY)
         return
     entry_id, old_pwd, old_notes = row
     enc_pwd = encrypt(fernet, new_password) if new_password else old_pwd
@@ -174,74 +182,38 @@ def cmd_update(conn, fernet):
 
     conn.execute("UPDATE entries SET password=?, notes=? WHERE id=?", (enc_pwd, enc_notes, entry_id))
     conn.commit()
-    print("Entry updated.")
+    print(MSG_ENTRY_UPDATED)
 
 def cmd_delete(conn):
-    service = input("Service: ").strip()
-    username = input("Username: ").strip()
+    service = input(PROMPT_SERVICE).strip()
+    username = input(PROMPT_USERNAME).strip()
     cur = conn.cursor()
     cur.execute("SELECT id FROM entries WHERE service=? AND username=?", (service, username))
     row = cur.fetchone()
     if not row:
-        print("No entry found.")
+        print(MSG_NO_ENTRY)
         return
     confirm = input(f"Delete {service} / {username}? (y/N): ").strip().lower()
     if confirm == "y":
         conn.execute("DELETE FROM entries WHERE id=?", (row[0],))
         conn.commit()
-        print("Entry deleted.")
+        print(MSG_ENTRY_DELETED)
     else:
-        print("Cancelled.")
-
-def rotate_master_password(conn, old_fernet: Fernet):
-    print("Rotate master password (re-encrypt all entries).")
-    new_master = prompt_hidden("New master password: ").strip()
-    confirm = prompt_hidden("Confirm new master password: ").strip()
-    if new_master != confirm or not new_master:
-        print("Passwords do not match or empty.")
-        return
-    # Generate new salt and new key
-    new_salt = secrets.token_bytes(16)
-    new_key = derive_key(new_master, new_salt)
-    new_fernet = Fernet(new_key)
-
-    # Re-encrypt verifier
-    store_verifier(conn, new_fernet)
-
-    # Update salt
-    conn.execute("INSERT OR REPLACE INTO meta (key, value) VALUES (?, ?)", ("salt", new_salt))
-
-    # Re-encrypt entries
-    cur = conn.cursor()
-    cur.execute("SELECT id, password, notes FROM entries")
-    rows = cur.fetchall()
-    for entry_id, enc_pwd, enc_notes in rows:
-        try:
-            plain_pwd = decrypt(old_fernet, enc_pwd)
-            plain_notes = decrypt(old_fernet, enc_notes) if enc_notes else None
-        except InvalidToken:
-            print(f"Failed to decrypt entry id {entry_id}; aborting rotation.")
-            return
-        new_enc_pwd = encrypt(new_fernet, plain_pwd)
-        new_enc_notes = encrypt(new_fernet, plain_notes) if plain_notes else None
-        conn.execute("UPDATE entries SET password=?, notes=? WHERE id=?", (new_enc_pwd, new_enc_notes, entry_id))
-    conn.commit()
-    print("Master password rotated successfully.")
+        print(MSG_CANCELLED)
 
 def print_menu():
     print("\nCommands:")
     print("  add     - Add new entry")
     print("  get     - Retrieve an entry")
-    print("  list    - List all entries (no passwords)")
+    print("  list    - List all entries")
     print("  update  - Update an entry")
     print("  delete  - Delete an entry")
-    print("  rotate  - Change master password")
     print("  exit    - Quit")
 
 def main():
     conn = connect_db()
     fernet = init_or_unlock(conn)
-    print("Vault unlocked.")
+    print(MSG_VAULT_UNLOCKED)
     while True:
         print_menu()
         cmd = input("Enter command: ").strip().lower()
@@ -255,13 +227,8 @@ def main():
             cmd_update(conn, fernet)
         elif cmd == "delete":
             cmd_delete(conn)
-        elif cmd == "rotate":
-            rotate_master_password(conn, fernet)
-            # Reinitialize with new password and salt
-            fernet = init_or_unlock(conn)
-            print("Vault re-unlocked.")
         elif cmd in ("exit", "quit"):
-            print("Goodbye.")
+            print(MSG_GOODBYE)
             break
         else:
             print("Unknown command.")

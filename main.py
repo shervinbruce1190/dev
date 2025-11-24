@@ -1,16 +1,25 @@
-def add(a, b):
-    return a + b
+# src/vault.py
 
+class Vault:
+    def __init__(self):
+        self.store = {}
 
-def subtract(a, b):
-    return a - b
+    def add(self, service: str, username: str, password: str):
+        key = (service, username)
+        if key in self.store:
+            return False
+        self.store[key] = password
+        return True
 
+    def get(self, service: str, username: str):
+        return self.store.get((service, username))
 
-def multiply(a, b):
-    return a * b
+    def delete(self, service: str, username: str):
+        key = (service, username)
+        if key in self.store:
+            del self.store[key]
+            return True
+        return False
 
-
-def divide(a, b):
-    if b == 0:
-        raise ValueError("Cannot divide by zero")
-    return a / b
+    def list_entries(self):
+        return list(self.store.keys())

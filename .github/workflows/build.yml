@@ -42,8 +42,8 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@v6
         with:
           args: >
-            -Dsonar.projectKey=RamkishoreK_devsecopsSonar
-            -Dsonar.organization=ramkishorek
+            -Dsonar.projectKey=shervinbruce1190_dev
+            -Dsonar.organization=shervinbruce1190
             -Dsonar.sources=src
             -Dsonar.python.coverage.reportPaths=coverage.xml
         env:

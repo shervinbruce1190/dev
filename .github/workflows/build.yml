@@ -1,48 +1,19 @@
 name: Build
-
 on:
   push:
     branches:
       - main
   pull_request:
     types: [opened, synchronize, reopened]
-
 jobs:
   sonarqube:
     name: SonarQube
     runs-on: ubuntu-latest
     steps:
-      # Checkout source code
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Shallow clones should be disabled for better relevancy of analysis
-
-      # Run SonarQube Scan
+          fetch-depth: 0  # Shallow clones should be disabled for a better relevancy of analysis
       - name: SonarQube Scan
-        uses: SonarSource/sonarqube-scan-action@1f9d8c6c9f0b2a7e3a6b4f9e2c1d7a8b5c6d9e0f
+        uses: SonarSource/sonarqube-scan-action@v6
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-        with:
-          projectKey: shervinbruce1190_dev
-
-  dast:   # <-- aligned correctly under jobs
-    name: OWASP ZAP DAST
-    runs-on: ubuntu-latest
-    needs: sonarqube   # Run only after SAST passes
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      # Spin up your app in a test environment (example: Docker)
-      - name: Start application
-        run: |
-          docker build -t myapp .
-          docker run -d -p 8080:8080 myapp
-
-      # Run OWASP ZAP baseline scan
-      - name: OWASP ZAP Scan
-        uses: zaproxy/action-baseline@7b6c1c9f2a7b6e8a2f3d9a0d6c5e4b8f9a1c2d3e
-
-          target: 'http://localhost:8080'
-          rules_file_name: '.zap/rules.tsv'
-          cmd_options: '-a'

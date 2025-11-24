@@ -41,8 +41,8 @@ jobs:
 
       # Run OWASP ZAP baseline scan
       - name: OWASP ZAP Scan
-        uses: zaproxy/action-baseline@v0.7.0
-        with:
+        uses: zaproxy/action-baseline@7b6c1c9f2a7b6e8a2f3d9a0d6c5e4b8f9a1c2d3e
+
           target: 'http://localhost:8080'
           rules_file_name: '.zap/rules.tsv'
           cmd_options: '-a'

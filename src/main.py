@@ -11,7 +11,7 @@ from datetime import datetime
 import base64
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
 
 class PasswordStrengthChecker:
@@ -165,7 +165,7 @@ class Encryptor:
         Returns:
             Derived key
         """
-        kdf = PBKDF2(
+        kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=self.salt,

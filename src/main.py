@@ -1,4 +1,4 @@
-# src/vault.py
+#main.py
 
 class Vault:
     def __init__(self):

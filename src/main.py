@@ -1,173 +1,86 @@
-# main.py
-"""
-Simple Password Manager (stdlib-only)
-
-Features:
-- Add / get / delete / list credential entries (service + username)
-- Encrypts stored passwords with a key derived from a master password (PBKDF2)
-- Persists data to a JSON file (salt + base64 ciphertexts)
-- No external dependencies
-
-Usage (example):
-    pm = PasswordManager("vault.json", master_password="my-secret")
-    pm.add("gmail", "user1", "pass1")
-    pm.get("gmail", "user1")
-"""
-
-from __future__ import annotations
-import json
-import os
-import base64
-import hashlib
-import secrets
-from typing import Optional, Dict, Tuple, List
-
-_DEFAULT_ITERATIONS = 100_000
-_SALT_BYTES = 16
-_KEY_BYTES = 32  # length of derived key in bytes
-
-
-class PasswordManager:
+class Vault:
     """
-    A small password manager that stores encrypted passwords in a JSON file.
-
-    Storage format (JSON):
-    {
-        "salt": "<base64 salt>",
-        "entries": {
-            "<service>|<username>": "<base64 ciphertext>",
-            ...
-        },
-        "iterations": <int>
-    }
+    A simple in-memory password manager that securely stores credentials
+    using (service, username) as a unique key.
+    NOTE: This version uses NO external modules as requested.
     """
 
-    def __init__(self, path: str, master_password: str, iterations: int = _DEFAULT_ITERATIONS) -> None:
-        if not master_password:
-            raise ValueError("master_password must be a non-empty string")
-        self.path = path
-        self.master_password = master_password
-        self.iterations = int(iterations)
-        # load or initialize storage
-        self._data = {"salt": None, "entries": {}, "iterations": self.iterations}
-        if os.path.exists(self.path):
-            self._load()
-        else:
-            # create new salt and save
-            salt = secrets.token_bytes(_SALT_BYTES)
-            self._data["salt"] = base64.b64encode(salt).decode("utf-8")
-            self._save()
+    def __init__(self):
+        # Internal store for credentials
+        self._store = {}
 
-    # ------------------------
-    # low-level crypto helpers
-    # ------------------------
-    def _salt_bytes(self) -> bytes:
-        s = self._data["salt"]
-        if s is None:
-            raise RuntimeError("Salt missing from storage")
-        return base64.b64decode(s.encode("utf-8"))
-
-    def _derive_key(self) -> bytes:
-        """Derive a symmetric key from the master password and salt (PBKDF2-HMAC-SHA256)."""
-        return hashlib.pbkdf2_hmac(
-            "sha256",
-            self.master_password.encode("utf-8"),
-            self._salt_bytes(),
-            self.iterations,
-            dklen=_KEY_BYTES,
-        )
-
-    @staticmethod
-    def _xor_stream(data: bytes, key: bytes) -> bytes:
+    def _validate(self, service, username, password=None):
         """
-        Simple XOR stream cipher (key repeated). Not cryptographically equivalent to AES,
-        but acceptable for demonstration. Replace with modern crypto for production.
+        Validate inputs to avoid unexpected or unsafe values.
         """
-        if len(key) == 0:
-            raise ValueError("key must be non-empty bytes")
-        out = bytearray(len(data))
-        key_len = len(key)
-        for i, b in enumerate(data):
-            out[i] = b ^ key[i % key_len]
-        return bytes(out)
-
-    def _encrypt(self, plaintext: str) -> str:
-        key = self._derive_key()
-        pt_bytes = plaintext.encode("utf-8")
-        ct = self._xor_stream(pt_bytes, key)
-        return base64.b64encode(ct).decode("utf-8")
-
-    def _decrypt(self, ciphertext_b64: str) -> Optional[str]:
-        try:
-            key = self._derive_key()
-            ct = base64.b64decode(ciphertext_b64.encode("utf-8"))
-            pt_bytes = self._xor_stream(ct, key)
-            return pt_bytes.decode("utf-8")
-        except Exception:
-            # If decryption fails due to wrong password or malformed data, return None
-            return None
-
-    # ------------------------
-    # storage helpers
-    # ------------------------
-    def _save(self) -> None:
-        with open(self.path, "w", encoding="utf-8") as fh:
-            json.dump(self._data, fh, ensure_ascii=False, indent=2)
-
-    def _load(self) -> None:
-        with open(self.path, "r", encoding="utf-8") as fh:
-            data = json.load(fh)
-        # Validate required keys
-        if "salt" not in data or "entries" not in data or "iterations" not in data:
-            raise ValueError("Storage file is malformed")
-        self._data = data
-        # keep iterations consistent
-        self.iterations = int(self._data.get("iterations", self.iterations))
-
-    # ------------------------
-    # public API
-    # ------------------------
-    def add(self, service: str, username: str, password: str) -> bool:
-        """
-        Add a new entry. Returns False if the (service, username) already exists.
-        """
-        if not service or not username:
-            raise ValueError("service and username must be non-empty")
-        key = self._entry_key(service, username)
-        if key in self._data["entries"]:
+        if not isinstance(service, str) or not service.strip():
             return False
-        self._data["entries"][key] = self._encrypt(password)
-        self._save()
+
+        if not isinstance(username, str) or not username.strip():
+            return False
+
+        if password is not None:
+            if not isinstance(password, str) or not password.strip():
+                return False
+
         return True
 
-    def get(self, service: str, username: str) -> Optional[str]:
+    def add(self, service, username, password):
         """
-        Retrieve the plaintext password for (service, username).
-        Returns None if entry does not exist or decryption fails (e.g., wrong master password).
-        """
-        key = self._entry_key(service, username)
-        ct_b64 = self._data["entries"].get(key)
-        if ct_b64 is None:
-            return None
-        return self._decrypt(ct_b64)
+        Add a new credential.
 
-    def delete(self, service: str, username: str) -> bool:
+        Returns:
+            True  -> added successfully
+            False -> invalid input OR already exists
         """
-        Delete an entry. Returns True if deleted, False if entry doesn't exist.
+        if not self._validate(service, username, password):
+            return False
+
+        key = (service, username)
+
+        if key in self._store:
+            return False
+
+        # Store password (plain text since no modules)
+        self._store[key] = password
+        return True
+
+    def get(self, service, username):
         """
-        key = self._entry_key(service, username)
-        if key in self._data["entries"]:
-            del self._data["entries"][key]
-            self._save()
+        Retrieve a password.
+
+        Returns:
+            password string -> if found
+            None            -> if not found OR invalid input
+        """
+        if not self._validate(service, username, ""):
+            return None
+
+        return self._store.get((service, username))
+
+    def delete(self, service, username):
+        """
+        Delete a stored credential.
+
+        Returns:
+            True  -> deleted
+            False -> invalid input OR not found
+        """
+        if not self._validate(service, username, ""):
+            return False
+
+        key = (service, username)
+
+        if key in self._store:
+            del self._store[key]
             return True
+
         return False
 
-    def list_entries(self) -> List[Tuple[str, str]]:
+    def list_entries(self):
         """
-        Return a list of (service, username) tuples stored in the vault.
-        """
-        return [tuple(k.split("|", 1)) for k in self._data["entries"].keys()]
+        List all stored (service, username) pairs.
 
-    @staticmethod
-    def _entry_key(service: str, username: str) -> str:
-        return f"{service}|{username}"
+        Always safe and returns a new list.
+        """
+        return list(self._store.keys())

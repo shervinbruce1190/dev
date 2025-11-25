@@ -31,12 +31,7 @@ jobs:
           pip install pytest
           pip install pytest-cov
           pip install coverage
-          pip install cryptography==41.0.7
           pip install unittest-xml-reporting==3.2.0
-          pip install pylint==3.0.3
-          pip install flake8==6.1.0
-          pip install black==23.12.1
-          pip install mypy==1.7.1
 
       # Step 4: Run Unit Tests with Coverage
       - name: Run Unit Tests with Coverage
